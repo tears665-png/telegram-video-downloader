@@ -53,7 +53,7 @@ def download_video(url):
 
     options = {
         "outtmpl": output_template,
-        "format": "best[ext=mp4]/best",
+        "format": "bestvideo*+bestaudio/best",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
