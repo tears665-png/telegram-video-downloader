@@ -1,17 +1,27 @@
 import os
-import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+import asyncio
 import yt_dlp
 
-# إعداد السجل (Logging) لمتابعة الأخطاء والعمليات
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+from dotenv import load_dotenv
 
-# توكن البوت الخاص بك
+from pathlib import Path
+
+env_file = Path(__file__).resolve().parent / ".env"
+load_dotenv(env_file)
+
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+# =========================================================
+# TELEGRAM BOT TOKEN
+# =========================================================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
@@ -19,91 +29,140 @@ if not BOT_TOKEN:
         "BOT_TOKEN is not set. Please set the BOT_TOKEN environment variable."
     )
 
-# مجلد مؤقت لحفظ الفيديوهات قبل إرسالها
+# Folder for downloaded videos
 DOWNLOAD_DIR = "downloads"
-if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+
+# =========================================================
+# /start
+# =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """الترحيب بالمستخدم عند إرسال /start"""
-    user_name = update.effective_user.first_name
-    welcome_message = (
-        f"أهلاً بك يا {user_name}! 👋\n\n"
-        "أنا بوت تحميل الفيديوهات. أرسل لي رابطاً من أي من المنصات التالية وسأقوم بتحميله وإرساله لك:\n"
-        "• يوتيوب (YouTube)\n"
-        "• إنستغرام (Instagram)\n"
-        "• فيسبوك (Facebook)\n"
-        "• تيك توك (TikTok)\n"
-        "• إكس / تويتر (X / Twitter)\n"
+    await update.message.reply_text(
+        "👋 أهلاً! ابعتلي رابط الفيديو وأنا بحاول أحمله وأبعثه إلك."
     )
-    await update.message.reply_text(welcome_message)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الروابط المرسلة وتحميل الفيديو"""
-    url = update.message.text.strip()
-    
-    # التحقق البسيط أن الرسالة تبدو كرابط
-    if not url.startswith("http://") and not url.startswith("https://"):
-        await update.message.reply_text("❌ الرجاء إرسال رابط صالح يبدأ بـ http أو https.")
-        return
 
-    status_message = await update.message.reply_text("⏳ جاري معالجة الرابط وتحميل الفيديو، يرجى الانتظار...")
+# =========================================================
+# Download video
+# =========================================================
 
-    output_template = os.path.join(DOWNLOAD_DIR, '%(id)s.%(ext)s')
-    
-    ydl_opts = {
-        'outtmpl': output_template,
-        'format': 'bestvideo+bestaudio/best', # اختيار أفضل جودة متاحة
-        'max_filesize': 50 * 1024 * 1024,   # الحد الأقصى لحجم الملف (50 ميجابايت كحد إرسال مجاني لتيليجرام عبر البوتات)
-        'noplaylist': True,                 # تحميل فيديو واحد وليس قائمة تشغيل كاملة
+def download_video(url):
+    output_template = os.path.join(
+        DOWNLOAD_DIR,
+        "%(title).80s.%(ext)s"
+    )
+
+    options = {
+        "outtmpl": output_template,
+        "format": "best[ext=mp4]/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
     }
 
-    file_path = None
+    with yt_dlp.YoutubeDL(options) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+
+        # If downloaded format is not MP4, look for the actual file
+        if not os.path.exists(filename):
+            base = os.path.splitext(filename)[0]
+
+            for file in os.listdir(DOWNLOAD_DIR):
+                if file.startswith(os.path.basename(base)):
+                    return os.path.join(DOWNLOAD_DIR, file)
+
+        return filename
+
+
+# =========================================================
+# Handle links
+# =========================================================
+
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    url = update.message.text.strip()
+
+    if not url.startswith(("http://", "https://")):
+        await update.message.reply_text(
+            "❌ ابعتلي رابط فيديو صالح."
+        )
+        return
+
+    status = await update.message.reply_text(
+        "⏳ جاري تحميل الفيديو..."
+    )
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            await update.message.chat.send_action(action="upload_video")
-            # استخراج معلومات الفيديو وتحميله
-            info = ydl.extract_info(url, download=True)
-            file_path = ydl.prepare_filename(info)
+        # yt-dlp is blocking, so run it in a separate thread
+        video_path = await asyncio.to_thread(
+            download_video,
+            url
+        )
 
-        # التأكد من أن الملف موجود وجاهز للإرسال
-        if os.path.exists(file_path):
-            await status_message.edit_text("📤 جاري رفع الفيديو وإرساله إليك...")
-            
-            with open(file_path, 'rb') as video_file:
-                await update.message.reply_video(
-                    video=video_file,
-                    caption="✅ تم التحميل بواسطة البوت بنجاح!"
-                )
-            await status_message.delete()
-        else:
-            await status_message.edit_text("❌ حدث خطأ: لم يتم العثور على الملف المُحمّل.")
+        if not os.path.exists(video_path):
+            raise Exception("Video file was not found.")
 
-    except yt_dlp.utils.DownloadError as e:
-        logger.error(f"Download error: {e}")
-        await status_message.edit_text("❌ عذراً، فشل تحميل الفيديو. تأكد أن الرابط صحيح وعام (ليس خاصاً).")
+        await status.edit_text(
+            "📤 تم التحميل، جاري إرسال الفيديو..."
+        )
+
+        with open(video_path, "rb") as video:
+            await update.message.reply_video(
+                video=video,
+                supports_streaming=True
+            )
+
+        # Delete downloaded file after sending
+        try:
+            os.remove(video_path)
+        except Exception:
+            pass
+
+        await status.delete()
+
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        await status_message.edit_text("❌ حدث خطأ غير متوقع أثناء المعالجة.")
-    
-    finally:
-        # تنظيف وحذف الملف من الخادم بعد إرساله للمحافظة على مساحة التخزين
-        if file_path and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                logger.error(f"Error removing file: {e}")
+        print("ERROR:", repr(e))
+
+        try:
+            await status.edit_text(
+                "❌ ما قدرت حمّل هالفيديو.\n"
+                "تأكد إن الرابط عام وقابل للوصول."
+            )
+        except Exception:
+            pass
+
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
-    """تشغيل التطبيق"""
-    app = ApplicationBuilder().token(TOKEN).build()
+    print("===================================")
+    print("VIDEO DOWNLOADER BOT")
+    print("Bot is starting...")
+    print("===================================")
 
-    # الأوامر والرسائل
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    print("🤖 البوت يعمل الآن ويستمع للرسائل...")
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_message
+        )
+    )
+
+    print("BOT IS RUNNING...")
     app.run_polling()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
