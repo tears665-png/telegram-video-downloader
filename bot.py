@@ -2,13 +2,6 @@ import os
 import asyncio
 import yt_dlp
 
-from dotenv import load_dotenv
-
-from pathlib import Path
-
-env_file = Path(__file__).resolve().parent / ".env"
-load_dotenv(env_file)
-
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -19,15 +12,10 @@ from telegram.ext import (
 )
 
 # =========================================================
-# TELEGRAM BOT TOKEN
+# PUT YOUR BOT TOKEN HERE
 # =========================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-if not BOT_TOKEN:
-    raise RuntimeError(
-        "BOT_TOKEN is not set. Please set the BOT_TOKEN environment variable."
-    )
+BOT_TOKEN = "8805153931:AAGUI-3nImbyy3lPQ8NzSr23Akp3dTGTBEQ"
 
 # Folder for downloaded videos
 DOWNLOAD_DIR = "downloads"
@@ -81,10 +69,8 @@ def download_video(url):
 # Handle links
 # =========================================================
 
-async def handle_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     url = update.message.text.strip()
 
     if not url.startswith(("http://", "https://")):
@@ -98,6 +84,7 @@ async def handle_message(
     )
 
     try:
+
         # yt-dlp is blocking, so run it in a separate thread
         video_path = await asyncio.to_thread(
             download_video,
@@ -112,6 +99,7 @@ async def handle_message(
         )
 
         with open(video_path, "rb") as video:
+
             await update.message.reply_video(
                 video=video,
                 supports_streaming=True
@@ -120,12 +108,13 @@ async def handle_message(
         # Delete downloaded file after sending
         try:
             os.remove(video_path)
-        except Exception:
+        except:
             pass
 
         await status.delete()
 
     except Exception as e:
+
         print("ERROR:", repr(e))
 
         try:
@@ -133,7 +122,7 @@ async def handle_message(
                 "❌ ما قدرت حمّل هالفيديو.\n"
                 "تأكد إن الرابط عام وقابل للوصول."
             )
-        except Exception:
+        except:
             pass
 
 
@@ -142,6 +131,7 @@ async def handle_message(
 # =========================================================
 
 def main():
+
     print("===================================")
     print("VIDEO DOWNLOADER BOT")
     print("Bot is starting...")
