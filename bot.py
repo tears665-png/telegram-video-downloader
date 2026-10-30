@@ -23,17 +23,15 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# أنماط الروابط المدعومة
+# Regex مرن يقبل أي رابط
 URL_PATTERN = re.compile(
-    r'https?://(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|'
-    r'twitter\.com|x\.com|facebook\.com|fb\.watch|pinterest\.com|pin\.it|reddit\.com|vimeo\.com|'
-    r'dailymotion\.com|twitch\.tv|soundcloud\.com)\S+',
+    r'https?://[^\s]+',
     re.IGNORECASE
 )
 
 def get_ydl_opts(output_path: str) -> dict:
     return {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestaudio/best',
         'outtmpl': output_path,
         'merge_output_format': 'mp4',
         'quiet': True,
@@ -64,6 +62,8 @@ async def download_media(url: str):
             ext = info.get('ext', '').lower()
             if ext in ['jpg', 'jpeg', 'png', 'webp'] or info.get('vcodec') == 'none':
                 return filename, 'photo'
+            elif ext in ['mp3', 'm4a', 'ogg', 'wav', 'flac']:
+                return filename, 'audio'
             return filename, 'video'
 
     try:
@@ -76,10 +76,11 @@ async def download_media(url: str):
 async def start_handler(message: Message):
     await message.answer(
         "مرحباً 👋\n\n"
-        "أرسل لي رابط فيديو أو صورة من:\n"
+        "أرسل لي رابط فيديو أو صوت أو صورة من:\n"
         "• يوتيوب\n"
         "• إنستغرام\n"
         "• تيك توك\n"
+        "• ساوند كلاود\n"
         "• تويتر / إكس\n"
         "• فيسبوك وغيرها\n\n"
         "وسأقوم بتحميله لك.",
@@ -92,7 +93,7 @@ async def url_handler(message: Message):
     match = URL_PATTERN.search(text)
 
     if not match:
-        await message.answer("أرسل رابط صحيح من يوتيوب أو إنستغرام أو تيك توك...")
+        await message.answer("أرسل رابط صحيح...")
         return
 
     url = match.group(0)
@@ -117,6 +118,8 @@ async def url_handler(message: Message):
 
             if media_type == 'photo' or filepath.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
                 await message.answer_photo(file, caption="✅ تم التحميل")
+            elif media_type == 'audio' or filepath.lower().endswith(('.mp3', '.m4a', '.ogg', '.wav', '.flac')):
+                await message.answer_audio(file, caption="✅ تم التحميل")
             else:
                 await message.answer_video(
                     file,
