@@ -12,7 +12,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # توكن البوت الخاص بك
-TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN is not set. Please set the BOT_TOKEN environment variable."
+    )
 
 # مجلد مؤقت لحفظ الفيديوهات قبل إرسالها
 DOWNLOAD_DIR = "downloads"
