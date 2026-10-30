@@ -1,158 +1,148 @@
-import os
+---
+
+### 4. `bot.py` (الكود الرئيسي)
+
+```python
 import asyncio
+import os
+import re
+import uuid
+from pathlib import Path
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import CommandStart
+from aiogram.types import Message, FSInputFile
+from aiogram.enums import ParseMode
+from dotenv import load_dotenv
 import yt_dlp
 
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN غير موجود! ضعه في ملف .env")
+
+DOWNLOAD_DIR = Path("downloads")
+DOWNLOAD_DIR.mkdir(exist_ok=True)
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+# أنماط الروابط المدعومة
+URL_PATTERN = re.compile(
+    r'https?://(?:www\.)?(?:youtube\.com|youtu\.be|instagram\.com|tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|'
+    r'twitter\.com|x\.com|facebook\.com|fb\.watch|pinterest\.com|pin\.it|reddit\.com|vimeo\.com|'
+    r'dailymotion\.com|twitch\.tv|soundcloud\.com)\S+',
+    re.IGNORECASE
 )
 
-# =========================================================
-# PUT YOUR BOT TOKEN HERE
-# =========================================================
-
-BOT_TOKEN = "8805153931:AAGUI-3nImbyy3lPQ8NzSr23Akp3dTGTBEQ"
-
-# Folder for downloaded videos
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-
-# =========================================================
-# /start
-# =========================================================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 أهلاً! ابعتلي رابط الفيديو وأنا بحاول أحمله وأبعثه إلك."
-    )
-
-
-# =========================================================
-# Download video
-# =========================================================
-
-def download_video(url):
-    output_template = os.path.join(
-        DOWNLOAD_DIR,
-        "%(title).80s.%(ext)s"
-    )
-
-    options = {
-        "outtmpl": output_template,
-        "format": "best[ext=mp4]/best",
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
+def get_ydl_opts(output_path: str) -> dict:
+    return {
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': output_path,
+        'merge_output_format': 'mp4',
+        'quiet': True,
+        'no_warnings': True,
+        'noplaylist': True,
+        'retries': 5,
+        'fragment_retries': 5,
+        'extractor_args': {
+            'tiktok': {
+                'webpage_download': True,
+            }
+        },
     }
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
+async def download_media(url: str):
+    file_id = str(uuid.uuid4())
+    output_template = str(DOWNLOAD_DIR / f"{file_id}.%(ext)s")
 
-        # If downloaded format is not MP4, look for the actual file
-        if not os.path.exists(filename):
-            base = os.path.splitext(filename)[0]
+    ydl_opts = get_ydl_opts(output_template)
+    loop = asyncio.get_event_loop()
 
-            for file in os.listdir(DOWNLOAD_DIR):
-                if file.startswith(os.path.basename(base)):
-                    return os.path.join(DOWNLOAD_DIR, file)
+    def _download():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
 
-        return filename
-
-
-# =========================================================
-# Handle links
-# =========================================================
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    url = update.message.text.strip()
-
-    if not url.startswith(("http://", "https://")):
-        await update.message.reply_text(
-            "❌ ابعتلي رابط فيديو صالح."
-        )
-        return
-
-    status = await update.message.reply_text(
-        "⏳ جاري تحميل الفيديو..."
-    )
+            # تحديد نوع الملف
+            ext = info.get('ext', '').lower()
+            if ext in ['jpg', 'jpeg', 'png', 'webp'] or info.get('vcodec') == 'none':
+                return filename, 'photo'
+            return filename, 'video'
 
     try:
-
-        # yt-dlp is blocking, so run it in a separate thread
-        video_path = await asyncio.to_thread(
-            download_video,
-            url
-        )
-
-        if not os.path.exists(video_path):
-            raise Exception("Video file was not found.")
-
-        await status.edit_text(
-            "📤 تم التحميل، جاري إرسال الفيديو..."
-        )
-
-        with open(video_path, "rb") as video:
-
-            await update.message.reply_video(
-                video=video,
-                supports_streaming=True
-            )
-
-        # Delete downloaded file after sending
-        try:
-            os.remove(video_path)
-        except:
-            pass
-
-        await status.delete()
-
+        filepath, media_type = await loop.run_in_executor(None, _download)
+        return filepath, media_type
     except Exception as e:
+        return None, str(e)
 
-        print("ERROR:", repr(e))
+@dp.message(CommandStart())
+async def start_handler(message: Message):
+    await message.answer(
+        "مرحباً 👋\n\n"
+        "أرسل لي رابط فيديو أو صورة من:\n"
+        "• يوتيوب\n"
+        "• إنستغرام\n"
+        "• تيك توك\n"
+        "• تويتر / إكس\n"
+        "• فيسبوك وغيرها\n\n"
+        "وسأقوم بتحميله لك.",
+        parse_mode=ParseMode.HTML
+    )
 
-        try:
-            await status.edit_text(
-                "❌ ما قدرت حمّل هالفيديو.\n"
-                "تأكد إن الرابط عام وقابل للوصول."
+@dp.message(F.text)
+async def url_handler(message: Message):
+    text = message.text.strip()
+    match = URL_PATTERN.search(text)
+
+    if not match:
+        await message.answer("أرسل رابط صحيح من يوتيوب أو إنستغرام أو تيك توك...")
+        return
+
+    url = match.group(0)
+    status_msg = await message.answer("⏳ جاري التحميل... انتظر قليلاً")
+
+    filepath, media_type = await download_media(url)
+
+    if not filepath or not os.path.exists(filepath):
+        await status_msg.edit_text(f"❌ فشل التحميل:\n<code>{media_type}</code>", parse_mode=ParseMode.HTML)
+        return
+
+    file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+
+    try:
+        if file_size_mb > 49:
+            await status_msg.edit_text(
+                f"⚠️ حجم الملف كبير جداً ({file_size_mb:.1f} MB)\n"
+                "تيليجرام لا يسمح بإرسال ملفات أكبر من 50 ميجا عبر البوت."
             )
+        else:
+            file = FSInputFile(filepath)
+
+            if media_type == 'photo' or filepath.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                await message.answer_photo(file, caption="✅ تم التحميل")
+            else:
+                await message.answer_video(
+                    file,
+                    caption="✅ تم التحميل",
+                    supports_streaming=True
+                )
+
+            await status_msg.delete()
+    except Exception as e:
+        await status_msg.edit_text(f"❌ خطأ أثناء الإرسال:\n<code>{str(e)}</code>", parse_mode=ParseMode.HTML)
+    finally:
+        # حذف الملف بعد الإرسال
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
         except:
             pass
 
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def main():
-
-    print("===================================")
-    print("VIDEO DOWNLOADER BOT")
-    print("Bot is starting...")
-    print("===================================")
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(
-        CommandHandler("start", start)
-    )
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_message
-        )
-    )
-
-    print("BOT IS RUNNING...")
-    app.run_polling()
-
+async def main():
+    print("✅ البوت يعمل الآن...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
