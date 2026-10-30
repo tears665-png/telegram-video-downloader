@@ -1,8 +1,3 @@
----
-
-### 4. `bot.py` (الكود الرئيسي)
-
-```python
 import asyncio
 import os
 import re
