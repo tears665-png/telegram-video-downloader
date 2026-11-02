@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 from pathlib import Path
+from html import escape
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
@@ -25,21 +26,6 @@ dp = Dispatcher()
 
 URL_PATTERN = re.compile(r'https?://[^\s]+', re.IGNORECASE)
 
-def get_ydl_opts(output_path: str) -> dict:
-    return {
-        'format': 'bestaudio/best',
-        'outtmpl': output_path,
-        'quiet': True,
-        'no_warnings': True,
-        'noplaylist': True,
-        'retries': 5,
-        'fragment_retries': 5,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }] if False else [],  # نخليها False عشان ما نجبر تحويل لكل شيء
-    }
 
 async def download_media(url: str):
     file_id = str(uuid.uuid4())
@@ -54,6 +40,11 @@ async def download_media(url: str):
         'noplaylist': True,
         'retries': 5,
         'fragment_retries': 5,
+        # تحسينات لإنستغرام
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
     }
 
     loop = asyncio.get_event_loop()
@@ -62,6 +53,11 @@ async def download_media(url: str):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
+            # أحياناً الاسم يتغير بعد الدمج
+            if not os.path.exists(filename):
+                # نبحث عن الملف اللي اتحمل
+                for f in DOWNLOAD_DIR.glob(f"{file_id}.*"):
+                    return str(f), info
             return filename, info
 
     try:
@@ -69,6 +65,7 @@ async def download_media(url: str):
         return filepath, info
     except Exception as e:
         return None, str(e)
+
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
@@ -78,6 +75,7 @@ async def start_handler(message: Message):
         "وأحمل لك الملف.",
         parse_mode=ParseMode.HTML
     )
+
 
 @dp.message(F.text)
 async def url_handler(message: Message):
@@ -95,7 +93,11 @@ async def url_handler(message: Message):
 
     if not result or not result[0] or not os.path.exists(result[0]):
         error_msg = result[1] if result else "خطأ غير معروف"
-        await status_msg.edit_text(f"❌ فشل التحميل:\n<code>{error_msg}</code>", parse_mode=ParseMode.HTML)
+        # هنا التصليح المهم
+        await status_msg.edit_text(
+            f"❌ فشل التحميل:\n<code>{escape(str(error_msg))}</code>",
+            parse_mode=ParseMode.HTML
+        )
         return
 
     filepath, info = result
@@ -112,7 +114,6 @@ async def url_handler(message: Message):
         file = FSInputFile(filepath)
         ext = Path(filepath).suffix.lower()
 
-        # تحديد نوع الإرسال بطريقة آمنة
         if ext in ['.jpg', '.jpeg', '.png', '.webp']:
             await message.answer_photo(file, caption="✅ تم التحميل")
         elif ext in ['.mp3', '.m4a', '.ogg', '.wav', '.flac', '.aac']:
@@ -120,19 +121,20 @@ async def url_handler(message: Message):
         elif ext in ['.mp4', '.mkv', '.webm', '.mov']:
             await message.answer_video(file, caption="✅ تم التحميل", supports_streaming=True)
         else:
-            # لو ما عرفنا النوع، نرسله كـ Document (آمن دائماً)
             await message.answer_document(file, caption="✅ تم التحميل")
 
         await status_msg.delete()
 
     except Exception as e:
-        # لو فشل الإرسال كـ فيديو أو صورة، نجرب نرسله كـ Document
         try:
             file = FSInputFile(filepath)
             await message.answer_document(file, caption="✅ تم التحميل (كملف)")
             await status_msg.delete()
         except Exception as e2:
-            await status_msg.edit_text(f"❌ خطأ أثناء الإرسال:\n<code>{str(e2)}</code>", parse_mode=ParseMode.HTML)
+            await status_msg.edit_text(
+                f"❌ خطأ أثناء الإرسال:\n<code>{escape(str(e2))}</code>",
+                parse_mode=ParseMode.HTML
+            )
     finally:
         try:
             if os.path.exists(filepath):
@@ -140,9 +142,11 @@ async def url_handler(message: Message):
         except:
             pass
 
+
 async def main():
     print("✅ البوت يعمل الآن...")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
