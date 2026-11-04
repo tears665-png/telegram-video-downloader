@@ -1,7 +1,7 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
-# تثبيت FFmpeg (مهم جداً)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# تثبيت ffmpeg + الأدوات الأساسية
+RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
@@ -12,7 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# إنشاء مجلد التحميلات
-RUN mkdir -p downloads
-
-CMD ["python", "bot.py"]
+CMD ["python", "main.py"]
