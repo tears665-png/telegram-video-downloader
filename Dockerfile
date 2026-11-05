@@ -34,4 +34,4 @@ COPY . .
 RUN mkdir -p /app/downloads /app/cookies && chmod -R 777 /app/downloads /app/cookies
 
 # تشغيل البوت
-CMD ["python", "main.py"]
+CMD ["python", "bot.py"]
